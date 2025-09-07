@@ -1,11 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
-import { Sparkles, Loader2, ClipboardCopy, Download } from "lucide-react";
-import toast from "react-hot-toast";
 
 export default function Generator() {
   const [code, setCode] = useState("");
-  const [testType, setTestType] = useState("unit");        // unit | api | ui
+  const [testType, setTestType] = useState("unit");        // unit | api | ui (UI)
   const [language, setLanguage] = useState("java");        // java, python, ...
   const [result, setResult] = useState("");
   const [loading, setLoading] = useState(false);
@@ -19,6 +17,7 @@ export default function Generator() {
     ui: "selenium",
   };
 
+  // Endpoint API (Paramètres > apiUrl, puis VITE_API_URL, puis fallback localhost)
   const endpoint = useMemo(() => {
     const stored = (typeof window !== "undefined" && localStorage.getItem("apiUrl")) || "";
     const env = import.meta?.env?.VITE_API_URL || "";
@@ -29,6 +28,7 @@ export default function Generator() {
   const abortRef = useRef(null);
   const textRef = useRef(null);
 
+  // Auto-resize du textarea
   useEffect(() => {
     if (textRef.current) {
       textRef.current.style.height = "0px";
@@ -38,13 +38,14 @@ export default function Generator() {
 
   const handleGenerate = async () => {
     if (!code.trim()) {
-      setError("Veuillez coller un extrait de code avant de générer.");
+      setError("Veuillez saisir un extrait de code avant de lancer la génération.");
       return;
     }
     setLoading(true);
     setResult("");
     setError("");
 
+    // Timeout et annulation
     abortRef.current?.abort?.();
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 15000); // 15s
@@ -61,17 +62,19 @@ export default function Generator() {
       });
 
       let data = {};
-      try { data = await res.json(); } catch {}
+      try { data = await res.json(); } catch { /* ignore */ }
 
-      if (!res.ok) throw new Error(data?.detail || `Erreur HTTP ${res.status}`);
+      if (!res.ok) {
+        throw new Error(data?.detail || `Erreur HTTP ${res.status}`);
+      }
 
       const cleaned = (data.result || "").replace(/```(?:\w+)?|```/g, "").trim();
       setResult(cleaned);
     } catch (e) {
       if (e.name === "AbortError") {
-        setError("Requête expirée (timeout). Vérifie que le backend écoute bien sur /generate-test.");
+        setError("Le serveur n’a pas répondu dans le délai imparti. Veuillez vérifier la connexion et réessayer.");
       } else {
-        setError(e.message || "Erreur inconnue");
+        setError(e.message || "Une erreur est survenue pendant la génération. Veuillez réessayer.");
       }
     } finally {
       clearTimeout(timeoutId);
@@ -101,18 +104,23 @@ export default function Generator() {
 
   return (
     <div className="space-y-6">
-      {/* Hero */}
-      <motion.div initial={{opacity:0,y:-10}} animate={{opacity:1,y:0}} transition={{duration:.5}}
-        className="rounded-3xl border border-black/10 bg-white/70 p-6 backdrop-blur-md dark:border-white/10 dark:bg-gray-900/60">
-        <h1 className="text-2xl font-bold flex items-center gap-2">
-          <Sparkles className="text-yellow-500"/> Génération automatique de cas de test
+      {/* En-tête sobre et professionnel */}
+      <motion.div
+        initial={{ opacity: 0, y: -10 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: .5 }}
+        className="rounded-3xl border border-black/10 bg-white/70 p-6 backdrop-blur-md dark:border-white/10 dark:bg-gray-900/60"
+      >
+        <h1 className="text-2xl font-bold">
+          Génération automatisée de cas de test logiciels
         </h1>
         <p className="mt-1 text-sm text-gray-600 dark:text-gray-300">
-          Collez votre code, choisissez le type (unitaire, API, UI) et le langage cible, puis générez.
+          Saisissez un extrait de code, sélectionnez le type de test et le langage souhaité.
+          La plateforme produira automatiquement un cas de test conforme aux standards de l’industrie.
         </p>
       </motion.div>
 
-      {/* Grille */}
+      {/* Grille principale */}
       <div className="grid gap-6 lg:grid-cols-2">
         {/* Entrée */}
         <section className="rounded-2xl border border-black/10 bg-white p-5 shadow-sm dark:border-white/10 dark:bg-gray-900">
@@ -123,7 +131,7 @@ export default function Generator() {
             ref={textRef}
             value={code}
             onChange={(e) => setCode(e.target.value)}
-            placeholder="Méthode métier, contrôleur REST, ou HTML/JS pour UI…"
+            placeholder="Ex. : méthode métier, contrôleur REST ou composant UI."
             className="w-full resize-none rounded-xl border border-black/10 bg-gray-50 p-3 font-mono text-[13px] leading-5
                        text-gray-900 outline-none focus:ring-2 focus:ring-indigo-400 dark:bg-gray-950 dark:text-gray-100"
           />
@@ -166,15 +174,17 @@ export default function Generator() {
             <button
               onClick={handleGenerate}
               disabled={loading || !code.trim()}
-              className="inline-flex w-full items-center justify-center rounded-xl bg-gradient-to-r from-indigo-600 to-fuchsia-600 px-4 py-2
-                         text-sm font-medium text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
+              className="inline-flex w-full items-center justify-center rounded-xl bg-indigo-700 px-4 py-2
+                         text-sm font-medium text-white transition hover:bg-indigo-800 disabled:cursor-not-allowed disabled:opacity-60"
             >
-              {loading ? (<><Loader2 className="mr-2 h-4 w-4 animate-spin"/> Génération en cours…</>) : "🚀 Générer"}
+              {loading ? "Génération en cours…" : "Lancer la génération"}
             </button>
           </div>
 
           {!!error && (
-            <p className="mt-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">❌ {error}</p>
+            <p className="mt-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+              {error}
+            </p>
           )}
         </section>
 
@@ -184,22 +194,25 @@ export default function Generator() {
             <h2 className="text-base font-semibold">Résultat</h2>
             <div className="flex items-center gap-2">
               <button
-                onClick={downloadResult} disabled={!result}
+                onClick={downloadResult}
+                disabled={!result}
                 className="rounded-lg border border-black/10 px-3 py-1.5 text-sm hover:bg-gray-50 dark:hover:bg-gray-800 disabled:opacity-40"
               >
-                <Download className="inline -mt-1 mr-1" size={16}/> Télécharger
+                Exporter le résultat
               </button>
               <button
-                onClick={copyToClipboard} disabled={!result}
+                onClick={copyToClipboard}
+                disabled={!result}
                 className="rounded-lg border border-black/10 px-3 py-1.5 text-sm hover:bg-gray-50 dark:hover:bg-gray-800 disabled:opacity-40"
               >
-                <ClipboardCopy className="inline -mt-1 mr-1" size={16}/> {copied ? "Copié !" : "Copier"}
+                {copied ? "Code copié" : "Copier le code"}
               </button>
             </div>
           </div>
+
           <pre className="h-[420px] overflow-auto rounded-xl border border-black/10 bg-gray-50 p-4 text-[13px] leading-5
                           text-gray-900 dark:bg-gray-950 dark:text-gray-100">
-{result || "Le code généré apparaîtra ici…"}
+{result || "Le cas de test généré s’affichera ci-dessous."}
           </pre>
         </section>
       </div>

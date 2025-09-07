@@ -12,7 +12,7 @@ export default function AppLayout() {
                           dark:border-white/10 dark:bg-gray-900/60">
           <div className="flex h-16 items-center gap-2 px-4">
             <div className="h-8 w-8 rounded-xl bg-gradient-to-br from-indigo-500 to-fuchsia-600" />
-            <span className="text-lg font-semibold tracking-tight">IA Test Automatisation</span>
+            <span className="text-lg font-semibold tracking-tight">TestIQ</span>
           </div>
           <nav className="px-3 py-3 space-y-2">
             <SidebarLink to="/" icon={<TestTubes size={16}/>}>Générateur</SidebarLink>

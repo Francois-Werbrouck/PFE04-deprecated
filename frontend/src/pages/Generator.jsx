@@ -1,85 +1,169 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+// src/pages/Generator.jsx
+import { useEffect, useRef, useState } from "react";
 import { motion } from "framer-motion";
+import toast from "react-hot-toast";
+import { apiJson, getApiBase } from "../lib/api";
+
+// Suggestions de modèles pour Ollama
+const OLLAMA_SUGGESTIONS = ["deepseek-coder:6.7b", "deepseek-coder:7b", "deepseek-coder:33b"];
+
+// Normalisation de fautes fréquentes (ex: ":3b" -> ":6.7b")
+const normalizeOllamaModel = (m) => {
+  const t = (m || "").trim();
+  if (!t) return "deepseek-coder:6.7b";
+  if (t === "deepseek-coder:3b") return "deepseek-coder:6.7b";
+  return t;
+};
 
 export default function Generator() {
   const [code, setCode] = useState("");
-  const [testType, setTestType] = useState("unit");        // unit | api | ui (UI)
-  const [language, setLanguage] = useState("java");        // java, python, ...
+  const [testType, setTestType] = useState("unit");   // unit | api | ui
+  const [language, setLanguage] = useState("java");
+  const [provider, setProvider] = useState(localStorage.getItem("provider") || "gemini"); // gemini | ollama
+  const [model, setModel] = useState(() =>
+    provider === "ollama"
+      ? (localStorage.getItem("ollamaModel") || "deepseek-coder:6.7b")
+      : (localStorage.getItem("geminiModel") || "gemini-1.5-flash")
+  );
+
   const [result, setResult] = useState("");
   const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState("");
+  const [status, setStatus] = useState("idle"); // idle | draft | confirmed
 
-  // Map vers les valeurs attendues par le backend
+  // Map UI -> backend
   const backendTypeMap = {
     unit: "unit",
     api: "rest-assured",
     ui: "selenium",
   };
 
-  // Endpoint API (Paramètres > apiUrl, puis VITE_API_URL, puis fallback localhost)
-  const endpoint = useMemo(() => {
-    const stored = (typeof window !== "undefined" && localStorage.getItem("apiUrl")) || "";
-    const env = import.meta?.env?.VITE_API_URL || "";
-    const base = (stored || env || "http://127.0.0.1:8000/").trim().replace(/\/+$/,"");
-    return base + "/generate-test";
-  }, []);
-
+  // Refs pour auto-resize
+  const codeRef = useRef(null);
+  const resultRef = useRef(null);
   const abortRef = useRef(null);
-  const textRef = useRef(null);
 
-  // Auto-resize du textarea
   useEffect(() => {
-    if (textRef.current) {
-      textRef.current.style.height = "0px";
-      textRef.current.style.height = Math.min(textRef.current.scrollHeight, 480) + "px";
+    if (codeRef.current) {
+      codeRef.current.style.height = "0px";
+      codeRef.current.style.height = Math.min(codeRef.current.scrollHeight, 480) + "px";
     }
   }, [code]);
 
-  const handleGenerate = async () => {
+  useEffect(() => {
+    if (resultRef.current) {
+      resultRef.current.style.height = "0px";
+      resultRef.current.style.height = Math.min(resultRef.current.scrollHeight, 480) + "px";
+    }
+  }, [result]);
+
+  // Met à jour le modèle par défaut selon provider
+  useEffect(() => {
+    const next = provider === "ollama"
+      ? (localStorage.getItem("ollamaModel") || "deepseek-coder:6.7b")
+      : (localStorage.getItem("geminiModel") || "gemini-1.5-flash");
+    setModel(next);
+  }, [provider]);
+
+  const onModelChange = (val) => {
+    const v = provider === "ollama" ? normalizeOllamaModel(val) : (val || "").trim();
+    setModel(v);
+    if (provider === "ollama") localStorage.setItem("ollamaModel", v);
+    else localStorage.setItem("geminiModel", v);
+  };
+
+  const handlePreview = async () => {
     if (!code.trim()) {
       setError("Veuillez saisir un extrait de code avant de lancer la génération.");
       return;
     }
     setLoading(true);
-    setResult("");
     setError("");
+    setResult("");
+    setStatus("idle");
 
-    // Timeout et annulation
+    // Timeout & abort
     abortRef.current?.abort?.();
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 15000); // 15s
+    const timeoutId = setTimeout(() => controller.abort(), 30000);
     abortRef.current = controller;
 
     try {
       const mappedType = backendTypeMap[testType] ?? "unit";
 
-      const res = await fetch(endpoint, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ code, test_type: mappedType, language }),
-        signal: controller.signal,
-      });
-
-      let data = {};
-      try { data = await res.json(); } catch { /* ignore */ }
-
-      if (!res.ok) {
-        throw new Error(data?.detail || `Erreur HTTP ${res.status}`);
+      // Sécurise le modèle pour Ollama
+      let effectiveModel = model;
+      if (provider === "ollama") {
+        effectiveModel = normalizeOllamaModel(model);
+        if (effectiveModel !== model) {
+          setModel(effectiveModel);
+          localStorage.setItem("ollamaModel", effectiveModel);
+        }
+        // simple validation
+        const looksValid = effectiveModel.startsWith("deepseek-coder:");
+        if (!looksValid) {
+          setError("Modèle Ollama invalide. Exemples valides : deepseek-coder:6.7b | deepseek-coder:7b | deepseek-coder:33b");
+          setLoading(false);
+          clearTimeout(timeoutId);
+          return;
+        }
       }
 
+      const payload = {
+        code,
+        test_type: mappedType,
+        language,
+        provider,
+        model: effectiveModel
+      };
+
+      const data = await apiJson("/generate-test-preview", { method: "POST", body: payload, signal: controller.signal });
       const cleaned = (data.result || "").replace(/```(?:\w+)?|```/g, "").trim();
       setResult(cleaned);
+      setStatus("draft");
     } catch (e) {
-      if (e.name === "AbortError") {
-        setError("Le serveur n’a pas répondu dans le délai imparti. Veuillez vérifier la connexion et réessayer.");
-      } else {
-        setError(e.message || "Une erreur est survenue pendant la génération. Veuillez réessayer.");
-      }
+      setError(e.message || "Erreur lors de la génération.");
     } finally {
       clearTimeout(timeoutId);
       setLoading(false);
     }
+  };
+
+  const handleConfirmSave = async () => {
+    if (!result.trim()) {
+      toast.error("Aucun résultat à enregistrer.");
+      return;
+    }
+    setSaving(true);
+    setError("");
+
+    try {
+      const mappedType = backendTypeMap[testType] ?? "unit";
+      const payload = {
+        code,
+        generated_test: result,
+        test_type: mappedType,
+        language,
+        status: "confirmed",
+        provider,
+        model
+      };
+      await apiJson("/test-cases", { method: "POST", body: payload });
+      setStatus("confirmed");
+      toast.success("Cas de test enregistré.");
+    } catch (e) {
+      setError(e.message || "Erreur lors de l'enregistrement.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleRetry = () => {
+    setResult("");
+    setStatus("idle");
+    setError("");
   };
 
   const copyToClipboard = () => {
@@ -112,12 +196,15 @@ export default function Generator() {
         className="rounded-3xl border border-black/10 bg-white/70 p-6 backdrop-blur-md dark:border-white/10 dark:bg-gray-900/60"
       >
         <h1 className="text-2xl font-bold">
-          Génération automatisée de cas de test logiciels
+          Génération automatisée de cas de test
         </h1>
         <p className="mt-1 text-sm text-gray-600 dark:text-gray-300">
-          Saisissez un extrait de code, sélectionnez le type de test et le langage souhaité.
-          La plateforme produira automatiquement un cas de test conforme aux standards de l’industrie.
+          Saisissez un extrait de code, sélectionnez le type de test, le langage, et le provider.
+          Prévisualisez, éditez si nécessaire, puis confirmez pour enregistrer en base.
         </p>
+        <div className="mt-3 text-xs text-gray-500">
+          API: <code className="rounded bg-black/5 px-1">{getApiBase()}</code>
+        </div>
       </motion.div>
 
       {/* Grille principale */}
@@ -128,7 +215,7 @@ export default function Generator() {
 
           <label className="mb-2 block text-sm">Code à analyser</label>
           <textarea
-            ref={textRef}
+            ref={codeRef}
             value={code}
             onChange={(e) => setCode(e.target.value)}
             placeholder="Ex. : méthode métier, contrôleur REST ou composant UI."
@@ -168,16 +255,60 @@ export default function Generator() {
                 <option value="go">Go</option>
               </select>
             </label>
+
+            <label className="text-sm">
+              <span className="mb-1 block">Provider</span>
+              <select
+                value={provider}
+                onChange={(e) => setProvider(e.target.value)}
+                className="w-full rounded-xl border border-black/10 bg-white p-2 text-sm outline-none focus:ring-2 focus:ring-indigo-400
+                           dark:bg-gray-950 dark:text-gray-100"
+              >
+                <option value="gemini">Gemini</option>
+                <option value="ollama">Ollama (DeepSeek)</option>
+              </select>
+            </label>
+
+            <label className="text-sm">
+              <span className="mb-1 block">Modèle</span>
+              <input
+                list={provider === "ollama" ? "ollama-models" : undefined}
+                value={model}
+                onChange={(e) => onModelChange(e.target.value)}
+                placeholder={provider === "ollama" ? "deepseek-coder:6.7b" : "gemini-1.5-flash"}
+                className="w-full rounded-xl border border-black/10 bg-white p-2 text-sm outline-none focus:ring-2 focus:ring-indigo-400
+                           dark:bg-gray-950 dark:text-gray-100"
+              />
+              {provider === "ollama" && (
+                <datalist id="ollama-models">
+                  {OLLAMA_SUGGESTIONS.map((opt) => <option key={opt} value={opt} />)}
+                </datalist>
+              )}
+              <p className="mt-1 text-xs opacity-70">
+                {provider === "ollama"
+                  ? "Exemples: deepseek-coder:6.7b | 7b | 33b"
+                  : "Exemples: gemini-1.5-flash | gemini-1.5-pro"}
+              </p>
+            </label>
           </div>
 
-          <div className="mt-4">
+          <div className="mt-4 grid gap-3 sm:grid-cols-2">
             <button
-              onClick={handleGenerate}
+              onClick={handlePreview}
               disabled={loading || !code.trim()}
               className="inline-flex w-full items-center justify-center rounded-xl bg-indigo-700 px-4 py-2
                          text-sm font-medium text-white transition hover:bg-indigo-800 disabled:cursor-not-allowed disabled:opacity-60"
             >
-              {loading ? "Génération en cours…" : "Lancer la génération"}
+              {loading ? "Génération en cours…" : "Prévisualiser (sans enregistrer)"}
+            </button>
+
+            <button
+              onClick={handleRetry}
+              disabled={loading || (!result && status !== "draft")}
+              className="inline-flex w-full items-center justify-center rounded-xl border border-black/10 px-4 py-2
+                         text-sm font-medium hover:bg-gray-50 dark:hover:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              Réinitialiser le résultat
             </button>
           </div>
 
@@ -188,32 +319,52 @@ export default function Generator() {
           )}
         </section>
 
-        {/* Résultat */}
+        {/* Résultat (éditable avant confirmation) */}
         <section className="rounded-2xl border border-black/10 bg-white p-5 shadow-sm dark:border-white/10 dark:bg-gray-900">
           <div className="mb-3 flex items-center justify-between">
-            <h2 className="text-base font-semibold">Résultat</h2>
+            <h2 className="text-base font-semibold">Résultat (éditable)</h2>
             <div className="flex items-center gap-2">
               <button
                 onClick={downloadResult}
                 disabled={!result}
                 className="rounded-lg border border-black/10 px-3 py-1.5 text-sm hover:bg-gray-50 dark:hover:bg-gray-800 disabled:opacity-40"
               >
-                Exporter le résultat
+                Exporter
               </button>
               <button
                 onClick={copyToClipboard}
                 disabled={!result}
                 className="rounded-lg border border-black/10 px-3 py-1.5 text-sm hover:bg-gray-50 dark:hover:bg-gray-800 disabled:opacity-40"
               >
-                {copied ? "Code copié" : "Copier le code"}
+                {copied ? "Code copié" : "Copier"}
               </button>
             </div>
           </div>
 
-          <pre className="h-[420px] overflow-auto rounded-xl border border-black/10 bg-gray-50 p-4 text-[13px] leading-5
-                          text-gray-900 dark:bg-gray-950 dark:text-gray-100">
-{result || "Le cas de test généré s’affichera ci-dessous."}
-          </pre>
+          <textarea
+            ref={resultRef}
+            value={result}
+            onChange={(e) => setResult(e.target.value)}
+            placeholder="Le cas de test généré s’affichera ci-dessous. Vous pouvez l’éditer avant de confirmer."
+            className="h-[420px] w-full resize-none rounded-xl border border-black/10 bg-gray-50 p-4 font-mono text-[13px] leading-5
+                       text-gray-900 outline-none focus:ring-2 focus:ring-indigo-400 dark:bg-gray-950 dark:text-gray-100"
+          />
+
+          <div className="mt-4 flex items-center gap-3">
+            <button
+              onClick={handleConfirmSave}
+              disabled={!result || saving}
+              className="inline-flex items-center justify-center rounded-xl bg-emerald-700 px-4 py-2
+                         text-sm font-medium text-white transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {saving ? "Enregistrement…" : "Confirmer et enregistrer"}
+            </button>
+            {status !== "idle" && (
+              <span className={`text-xs ${status === "confirmed" ? "text-emerald-600" : "text-amber-600"}`}>
+                Statut : {status}
+              </span>
+            )}
+          </div>
         </section>
       </div>
     </div>

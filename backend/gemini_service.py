@@ -1,76 +1,85 @@
-# backend/gemini_service.py
 import os
 from textwrap import dedent
+from typing import Optional
 from dotenv import load_dotenv
 import google.generativeai as genai
 
 load_dotenv()
+
 api_key = os.getenv("GOOGLE_API_KEY")
 if not api_key:
-    raise ValueError("Clé API Google manquante dans .env")
+    raise ValueError("Clé API Google manquante dans .env (GOOGLE_API_KEY)")
 
 genai.configure(api_key=api_key)
-_model = genai.GenerativeModel("gemini-1.5-flash")
+
+DEFAULT_GEMINI_MODEL = os.getenv("GOOGLE_MODEL", "gemini-1.5-flash")
 
 GOAL_BY_TYPE = {
-    "unit": "Écris des tests unitaires couvrant cas nominal + cas d'erreur (limite/exception).",
-    "rest-assured": "Écris des tests d'API HTTP avec requêtes et assertions (statut, headers, corps).",
+    "unit": "Écris des tests unitaires couvrant cas nominal et cas d'erreur (limite/exception).",
+    "rest-assured": "Écris des tests d'API HTTP avec requêtes et assertions (statut, en-têtes, corps).",
     "selenium": "Écris des tests E2E navigateur robustes (localisateurs stables, actions, assertions).",
 }
 
 FRAMEWORK_HINT = {
-    # UNIT
-    ("java","unit"): "Utilise JUnit 5 + AssertJ.",
-    ("python","unit"): "Utilise pytest.",
-    ("javascript","unit"): "Utilise Jest.",
-    ("typescript","unit"): "Utilise Jest (ts-jest).",
-    ("csharp","unit"): "Utilise xUnit.",
-    ("ruby","unit"): "Utilise RSpec.",
-    ("go","unit"): "Utilise testing.",
-    # REST-ASSURED (API) — équivalents selon langage
-    ("java","rest-assured"): "Utilise REST Assured + JUnit 5.",
-    ("python","rest-assured"): "Utilise requests + pytest.",
-    ("javascript","rest-assured"): "Utilise supertest + Jest.",
-    ("typescript","rest-assured"): "Utilise supertest + Jest.",
-    ("csharp","rest-assured"): "Utilise RestSharp + xUnit.",
-    ("ruby","rest-assured"): "Utilise Faraday + RSpec.",
-    ("go","rest-assured"): "Utilise net/http + testing.",
-    # SELENIUM (UI)
-    ("java","selenium"): "Utilise Selenium WebDriver + JUnit 5.",
-    ("python","selenium"): "Utilise selenium + pytest.",
-    ("javascript","selenium"): "Utilise selenium-webdriver + Jest.",
-    ("typescript","selenium"): "Utilise selenium-webdriver + Jest.",
-    ("csharp","selenium"): "Utilise Selenium WebDriver + xUnit.",
-    ("ruby","selenium"): "Utilise selenium-webdriver + RSpec.",
-    ("go","selenium"): "Utilise chromedp (équivalent Selenium en Go).",
+    ("java","unit"): "JUnit 5 + AssertJ",
+    ("python","unit"): "pytest",
+    ("javascript","unit"): "Jest",
+    ("typescript","unit"): "Jest (ts-jest)",
+    ("csharp","unit"): "xUnit",
+    ("ruby","unit"): "RSpec",
+    ("go","unit"): "testing",
+
+    ("java","rest-assured"): "REST Assured + JUnit 5",
+    ("python","rest-assured"): "requests + pytest",
+    ("javascript","rest-assured"): "supertest + Jest",
+    ("typescript","rest-assured"): "supertest + Jest",
+    ("csharp","rest-assured"): "RestSharp + xUnit",
+    ("ruby","rest-assured"): "Faraday + RSpec",
+    ("go","rest-assured"): "net/http + testing",
+
+    ("java","selenium"): "Selenium WebDriver + JUnit 5",
+    ("python","selenium"): "selenium + pytest",
+    ("javascript","selenium"): "selenium-webdriver + Jest",
+    ("typescript","selenium"): "selenium-webdriver + Jest",
+    ("csharp","selenium"): "Selenium WebDriver + xUnit",
+    ("ruby","selenium"): "selenium-webdriver + RSpec",
+    ("go","selenium"): "chromedp (équivalent Selenium en Go)",
 }
 
 def _build_prompt(code: str, test_type: str, language: str) -> str:
     goal = GOAL_BY_TYPE.get(test_type, "")
     hint = FRAMEWORK_HINT.get((language, test_type), "")
     return dedent(f"""
-    Tu es un expert en automatisation des tests.
+    Tu es un expert en AUTOMATISATION DE TESTS.
+
+    Contraintes FERMES:
+    - Réponds UNIQUEMENT par du CODE (aucune explication).
+    - AUCUNE balise ``` ni texte hors code.
+    - Inclure TOUS les imports nécessaires.
+    - Au moins un cas nominal ET un cas d'erreur/limite.
+    - Crée des stubs minimaux si nécessaire.
 
     Langage cible: {language}
     Type de test: {test_type}
-    {goal}
-    {hint}
+    Cadre attendu: {hint}
 
-    Règles:
-    - Réponds UNIQUEMENT avec le code du test, sans explication ni balises ``` .
-    - Inclue tous les imports nécessaires.
-    - Donne des noms de classes/fonctions pertinents.
-    - Fournis au moins un cas nominal et un cas d'erreur/limite.
-    - Si l'entrée n'est pas suffisante (ex.: pas d'API exposée), crée un stub minimal réaliste.
-
-    Code source à tester:
+    Code sous test:
     ---
     {code}
     ---
     """).strip()
 
-def generate_test_case_with_gemini(code: str, test_type: str, language: str) -> str:
+def generate_test_case_with_gemini(code: str, test_type: str, language: str, model: Optional[str] = None) -> str:
     prompt = _build_prompt(code, test_type, language)
-    out = _model.generate_content(prompt)
-    text = (out.text or "").strip()
+    model_name = model or DEFAULT_GEMINI_MODEL
+    m = genai.GenerativeModel(model_name)
+    out = m.generate_content(
+        prompt,
+        generation_config=genai.types.GenerationConfig(
+            temperature=0.2,
+            top_p=0.9,
+            candidate_count=1,
+        )
+    )
+    text = (getattr(out, "text", "") or "").strip()
     return text.replace("```", "").strip()

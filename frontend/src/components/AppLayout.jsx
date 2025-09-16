@@ -2,6 +2,7 @@ import { Sparkles, Settings, History, TestTubes } from "lucide-react";
 import { Outlet } from "react-router-dom";
 import SidebarLink from "./SidebarLink";
 import ThemeToggle from "./ThemeToggle";
+import { FlaskRound } from "lucide-react";
 
 export default function AppLayout() {
   return (
@@ -16,6 +17,7 @@ export default function AppLayout() {
           </div>
           <nav className="px-3 py-3 space-y-2">
             <SidebarLink to="/" icon={<TestTubes size={16}/>}>Générateur</SidebarLink>
+            <SidebarLink to="/executions" icon={<FlaskRound size={16}/>}>Exécutions</SidebarLink>
             <SidebarLink to="/history" icon={<History size={16}/>}>Historique</SidebarLink>
             <SidebarLink to="/settings" icon={<Settings size={16}/>}>Paramètres</SidebarLink>
           </nav>

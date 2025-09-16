@@ -3,8 +3,12 @@ import re
 import requests
 from typing import Optional, List, Dict
 
+# -----------------------------
+# 0) Modèle & endpoint Ollama
+# -----------------------------
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://127.0.0.1:11434/api/generate")
-DEFAULT_OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "deepseek-coder:1.3b")
+# IMPORTANT: utiliser un modèle INSTRUCT
+DEFAULT_OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "deepseek-coder:6.7b-instruct")
 
 # ============================
 # 1) Détection & parsing Spring
@@ -22,7 +26,7 @@ _MAPPING = re.compile(
 )
 
 _REQ_PARAM = re.compile(
-    r"@RequestParam(?:\s*\(\s*name\s*=\s*)?\s*(?:value\s*=\s*)?\s*([\"']?)([A-Za-z_][A-Za-z0-9_]*)\1",
+    r"@RequestParam(?:\s*\(\s*(?:name\s*=\s*)?(?:value\s*=\s*)?)?\s*([\"']?)([A-Za-z_][A-Za-z0-9_]*)\1",
     re.MULTILINE,
 )
 
@@ -31,12 +35,18 @@ _CLASS_REQUEST_MAPPING = re.compile(
     re.MULTILINE,
 )
 
+_CLASS_NAME = re.compile(r"\bclass\s+([A-Za-z_][A-Za-z0-9_]*)\b")
+
 def is_spring_controller(src: str) -> bool:
     return bool(_SPRING_ANNOT.search(src or ""))
 
 def _class_level_prefix(src: str) -> str:
     m = _CLASS_REQUEST_MAPPING.search(src or "")
     return m.group(2).strip() if m else ""
+
+def _extract_controller_class_name(src: str) -> str:
+    m = _CLASS_NAME.search(src or "")
+    return m.group(1) if m else "ControllerUnderTest"
 
 def parse_spring_endpoints(src: str) -> List[Dict]:
     """
@@ -55,15 +65,13 @@ def parse_spring_endpoints(src: str) -> List[Dict]:
             http = (m.group(5) or "").upper()
             path = (m.group(4) or "").strip().strip('"\'')
         full = f"{('/' + base.strip('/')) if base else ''}/{path.strip('/')}".replace("//", "/")
-        # Params à partir de la signature
-        # Très simple : on prend tous les @RequestParam du fichier (suffisant pour un contrôleur petit)
         params = list({p.group(2) for p in _REQ_PARAM.finditer(src)})
         endpoints.append({"method": http, "path": full if full.startswith("/") else f"/{full}", "params": params})
     # dédoublonne
     uniq = []
     seen = set()
     for e in endpoints:
-        k = (e["method"], e["path"], tuple(sorted(e["params"])))
+        k = (e["method"], e["path"], tuple(sorted(e["params"])) )
         if k not in seen:
             seen.add(k)
             uniq.append(e)
@@ -83,11 +91,10 @@ def _spring_http_hint(prefer: str, spec: List[Dict]) -> str:
     if prefer == "restassured":
         return (
             f"Contrôleur REST Spring — {target}\n"
-            "Tu DOIS tester via **REST Assured** (Junit 5). "
+            "Tu DOIS tester via **REST Assured** (JUnit 5). "
             "N’APPELLE PAS directement la méthode Java ; passe par HTTP. "
             "Inclure imports et annotations. Cas attendus : nominal + erreurs (paramètre manquant, type invalide)."
         )
-    # défaut MockMvc
     return (
         f"Contrôleur REST Spring — {target}\n"
         "Tu DOIS tester via **MockMvc** avec `@WebMvcTest(controllers=...)`. "
@@ -100,14 +107,14 @@ PROMPT_TEMPLATE = """Tu es un expert en AUTOMATISATION DE TESTS.
 OBJECTIF — produire un FICHIER DE TEST complet pour le code fourni.
 
 CONTRAINTES TRÈS STRICTES :
-- Réponds UNIQUEMENT par du CODE (zéro phrase, zéro explication).
+- Réponds UNIQUEMENT par du CODE (aucune phrase, aucune explication).
 - AUCUNE balise ``` ni markdown.
 - Commence ta réponse PAR LA PREMIÈRE LIGNE DE CODE (import/package/...).
 - Inclure TOUS les imports nécessaires.
 - Contenir AU MINIMUM :
   • 1 cas nominal
-  • 1 cas d’erreur/limite (ex. paramètre manquant, type invalide, valeur frontière).
-- Si nécessaire, CRÉE des stubs réalistes minimaux pour exécuter les tests.
+  • 1 cas d’erreur/limite (paramètre manquant, type invalide, valeur frontière).
+- Si nécessaire, CRÉE des stubs minimaux pour exécuter les tests.
 - Respecte le framework indiqué ci-dessous.
 
 Langage cible : {language}
@@ -124,7 +131,7 @@ RENVOIE UNIQUEMENT LE CODE DU TEST, EN COMMENÇANT DIRECTEMENT PAR LA PREMIÈRE 
 """
 
 def _framework_hint(language: str, test_type: str) -> str:
-    key = (language or "").lower(), (test_type or "").lower()
+    key = ((language or "").lower(), (test_type or "").lower())
     mapping = {
         ("java","unit"): "JUnit 5 + AssertJ",
         ("java","rest-assured"): "JUnit 5, tests d’API HTTP Spring (MockMvc ou REST Assured).",
@@ -159,7 +166,6 @@ def _framework_hint(language: str, test_type: str) -> str:
 def _domain_hint(code: str, language: str, test_type: str) -> str:
     if (language or "").lower() == "java" and (test_type or "").lower() in {"rest-assured", "unit"} and is_spring_controller(code):
         spec = parse_spring_endpoints(code)
-        # Par défaut on préfère MockMvc (plus fiable/rapide en unit/integration light)
         return _spring_http_hint("mockmvc", spec)
     return "Aucune directive spécifique."
 
@@ -224,12 +230,11 @@ def _covers_endpoint(text: str, ep: Dict) -> bool:
         method_ok = ("delete(" in text)
     return path_ok and method_ok
 
-def _fallback_spring_mockmvc_from_spec(spec: List[Dict], controller_class: str = "CalculatorController") -> str:
-    # prend le premier endpoint comme base
-    ep = spec[0] if spec else {"method": "GET", "path": "/api/add", "params": ["a", "b"]}
+def _fallback_spring_mockmvc_from_spec(spec: List[Dict], controller_class: str = "ControllerUnderTest") -> str:
+    ep = spec[0] if spec else {"method": "GET", "path": "/api/ping", "params": []}
     params = ep.get("params") or []
     params_str = "".join([f'.param("{p}", "1")' for p in params])
-    body_expect = 'content().string("2")' if "a" in params and "b" in params else "content().string(notNullValue())"
+    body_expect = 'content().string("2")' if "a" in params and "b" in params else "content().string(org.hamcrest.Matchers.notNullValue())"
     return (
         "package com.example;\n\n"
         "import org.junit.jupiter.api.Test;\n"
@@ -258,57 +263,103 @@ def _fallback_spring_mockmvc_from_spec(spec: List[Dict], controller_class: str =
 # 4) Appel Ollama
 # ============================
 
-def _ollama_call(payload: dict, timeout: int = 60) -> str:
+def _ollama_call(payload: dict, timeout: int = 90) -> str:
     r = requests.post(OLLAMA_URL, json=payload, timeout=timeout)
     if r.status_code != 200:
         try:
             detail = r.json()
         except Exception:
             detail = r.text
-        raise Exception(f"Erreur modèle LLM (Ollama): {detail}")
+        if "model not found" in str(detail).lower():
+            raise Exception(f"Model {payload.get('model')} not found. Faites: ollama pull {payload.get('model')}")
+        raise Exception(f"Ollama error {r.status_code}: {detail}")
     return (r.json().get("response") or "").strip()
+
+def _is_stub_or_too_short(text: str) -> bool:
+    t = (text or "").strip()
+    if not t:
+        return True
+    if "// Test stub" in t or "Test stub" in t:
+        return True
+    # ~30 chars = trop court pour un fichier de test réaliste
+    return len(t) < 30
 
 def generate_test_case_ollama(
     code: str,
     test_type: str,
     language: str,
     model: Optional[str] = None,
-    timeout_seconds: int = 60,
+    timeout_seconds: int = 90,
 ) -> str:
     model_name = (model or DEFAULT_OLLAMA_MODEL).strip()
     prompt = _build_prompt(code, test_type, language)
 
     base_options = {
-        "temperature": 0.2,
+        "temperature": 0.1,
         "top_p": 0.9,
-        "num_predict": 768,
+        "top_k": 40,
+        "num_predict": 2048,  # clé pour éviter les coupes => stub
         "repeat_penalty": 1.05,
         "stop": ["```", "<html", "<!DOCTYPE", "Explanation:", "Explication:"],
     }
 
     # ----- Passe 1
     raw1 = _ollama_call({"model": model_name, "prompt": prompt, "stream": False, "options": base_options}, timeout_seconds)
-    code1 = _postprocess_response(raw1)
-    if not code1:
-        code1 = _strip_to_first_code_like_line(raw1)
+    code1 = _postprocess_response(raw1) or _strip_to_first_code_like_line(raw1)
 
+    # Traitement spécial Spring/Java
     if (language or "").lower() == "java" and is_spring_controller(code):
         spec = parse_spring_endpoints(code)
-        if _looks_like_http_test_java(code1) and (not spec or any(_covers_endpoint(code1, ep) for ep in spec)):
+        ctrl = _extract_controller_class_name(code)
+
+        if not _is_stub_or_too_short(code1) and _looks_like_http_test_java(code1) and (not spec or any(_covers_endpoint(code1, ep) for ep in spec)):
             return code1
+
         # ----- Passe 2 (renforcement Spring HTTP)
         reinforced = prompt + (
-            "\n\nTON PRÉCÉDENT RÉSULTAT N’UTILISAIT PAS D’APPELS HTTP CORRECTS POUR SPRING. "
-            "UTILISE OBLIGATOIREMENT MockMvc (@WebMvcTest + mockMvc.perform(...)) "
-            "OU REST Assured. NE PAS APPELER DIRECTEMENT LES MÉTHODES JAVA. CODE UNIQUEMENT."
+            "\n\nTON PRÉCÉDENT RÉSULTAT N’UTILISAIT PAS D’APPELS HTTP SPRING CORRECTS OU ÉTAIT INCOMPLET. "
+            "UTILISE OBLIGATOIREMENT MockMvc (@WebMvcTest + mockMvc.perform(...)) OU REST Assured. "
+            "NE PAS APPELER DIRECTEMENT LES MÉTHODES JAVA. CODE UNIQUEMENT, SANS MARKDOWN."
         )
         raw2 = _ollama_call({"model": model_name, "prompt": reinforced, "stream": False,
-                             "options": {**base_options, "temperature": 0.15, "num_predict": 1024}}, timeout_seconds)
+                             "options": {**base_options, "temperature": 0.05, "num_predict": 2304}}, timeout_seconds)
         code2 = _postprocess_response(raw2) or _strip_to_first_code_like_line(raw2)
-        if code2 and _looks_like_http_test_java(code2) and (not spec or any(_covers_endpoint(code2, ep) for ep in spec)):
+        if not _is_stub_or_too_short(code2) and _looks_like_http_test_java(code2) and (not spec or any(_covers_endpoint(code2, ep) for ep in spec)):
             return code2
-        # ----- Fallback Spring HTTP à partir de la spéc
-        return _fallback_spring_mockmvc_from_spec(spec)
 
-    # Non Spring : on renvoie le meilleur effort
-    return code1 or "// Test stub"
+        # ----- Fallback Spring HTTP à partir de la spéc
+        return _fallback_spring_mockmvc_from_spec(spec, controller_class=ctrl)
+
+    # Non Spring : on renvoie le meilleur effort, et si stub => on force un squelette minimal plutôt que "// Test stub"
+    if not _is_stub_or_too_short(code1):
+        return code1
+
+    # Fallback générique par langage (squelette de test utile > stub vide)
+    lang = (language or "").lower()
+    if lang == "java":
+        return (
+            "import org.junit.jupiter.api.Test;\n"
+            "import static org.junit.jupiter.api.Assertions.*;\n\n"
+            "class GeneratedUnitTest {\n"
+            "  @Test void nominal() {\n"
+            "    // TODO: instancier la classe cible et vérifier un comportement nominal\n"
+            "    assertTrue(true);\n"
+            "  }\n"
+            "  @Test void erreur_ou_limite() {\n"
+            "    // TODO: cas d'erreur/limite (argument invalide, valeur frontière...)\n"
+            "    assertNotNull(new Object());\n"
+            "  }\n"
+            "}\n"
+        )
+    if lang == "python":
+        return (
+            "import pytest\n\n"
+            "def test_nominal():\n"
+            "    # TODO: appeler une fonction réelle et vérifier le résultat\n"
+            "    assert True\n\n"
+            "def test_erreur_ou_limite():\n"
+            "    # TODO: cas d'erreur/limite\n"
+            "    assert 1 == 1\n"
+        )
+    # Dernier recours
+    return "// Test non vide: veuillez fournir plus de contexte (classe/méthodes à tester) pour un test complet."

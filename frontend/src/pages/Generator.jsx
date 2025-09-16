@@ -31,7 +31,8 @@ export default function Generator() {
   const [saving, setSaving] = useState(false);
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState("");
-  const [status, setStatus] = useState("idle"); // idle | draft | confirmed
+  const [status, setStatus] = useState("idle"); 
+  const [savedId, setSavedId] = useState(null);
 
   // Map UI -> backend
   const backendTypeMap = {
@@ -132,33 +133,34 @@ export default function Generator() {
   };
 
   const handleConfirmSave = async () => {
-    if (!result.trim()) {
-      toast.error("Aucun résultat à enregistrer.");
-      return;
-    }
-    setSaving(true);
-    setError("");
+  if (!result.trim()) {
+    toast.error("Aucun résultat à enregistrer.");
+    return;
+  }
+  setSaving(true);
+  setError("");
 
-    try {
-      const mappedType = backendTypeMap[testType] ?? "unit";
-      const payload = {
-        code,
-        generated_test: result,
-        test_type: mappedType,
-        language,
-        status: "confirmed",
-        provider,
-        model
-      };
-      await apiJson("/test-cases", { method: "POST", body: payload });
-      setStatus("confirmed");
-      toast.success("Cas de test enregistré.");
-    } catch (e) {
-      setError(e.message || "Erreur lors de l'enregistrement.");
-    } finally {
-      setSaving(false);
-    }
-  };
+  try {
+    const mappedType = backendTypeMap[testType] ?? "unit";
+    const payload = {
+      code,
+      generated_test: result,
+      test_type: mappedType,
+      language,
+      status: "confirmed",
+      provider,
+      model
+    };
+    const created = await apiJson("/test-cases", { method: "POST", body: payload });
+    setSavedId(created?._id || null); // <-- Ajout ici
+    setStatus("confirmed");
+    toast.success("Cas de test enregistré.");
+  } catch (e) {
+    setError(e.message || "Erreur lors de l'enregistrement.");
+  } finally {
+    setSaving(false);
+  }
+};
 
   const handleRetry = () => {
     setResult("");
@@ -359,6 +361,19 @@ export default function Generator() {
             >
               {saving ? "Enregistrement…" : "Confirmer et enregistrer"}
             </button>
+            <button
+              onClick={async () => {
+                if (!savedId) { alert("Aucun ID sauvegardé. Enregistrez d’abord."); return; }
+                try {
+                  const d = await apiJson(`/test-cases/${savedId}/run`, { method: "POST", body: { language } });
+                  alert(`Exécution lancée: ${d.execId}`);
+                } catch (e) { alert(e.message); }
+              }}
+              disabled={!result || !savedId}
+              className="inline-flex items-center justify-center rounded-xl border border-black/10 px-4 py-2 text-sm hover:bg-gray-50 dark:hover:bg-gray-800 disabled:opacity-60"
+          >
+              Exécuter maintenant
+          </button>
             {status !== "idle" && (
               <span className={`text-xs ${status === "confirmed" ? "text-emerald-600" : "text-amber-600"}`}>
                 Statut : {status}

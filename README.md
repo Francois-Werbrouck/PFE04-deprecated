@@ -27,7 +27,10 @@
    ```
 
 3. Créer un fichier `.env` avec :
-    ```API_KEY=<ta_cle_api>```
+
+    ```env
+    API_KEY=<ta_cle_api>
+    ```
 
 4. Lancer le serveur :
 
@@ -39,9 +42,17 @@
 
 ## Lancement du Frontend (React + Vite)
 
-1. Aller dans le dossier : cd frontend
+1. Aller dans le dossier :
 
-2. Installer les dépendances :npm install
+    ```bash
+    cd frontend
+    ```
+
+2. Installer les dépendances :
+
+    ```bash
+    npm install
+    ```
 
 3. Lancer le projet :
 
@@ -70,4 +81,4 @@
 - Les prompts sont envoyés à l’API
 - Les cas de test sont générés
 
-Acces à la BDD :  <https://cloud.mongodb.com/>
+Accès à la BDD :  <https://cloud.mongodb.com/>

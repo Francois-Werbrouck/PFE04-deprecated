@@ -1,4 +1,4 @@
-# Guide de Lancement du Prototype IA – 
+# Guide de Lancement du Prototype IA –
 
 ## Prérequis
 
@@ -13,6 +13,7 @@
 ## Lancement du Backend (FastAPI)
 
 1. Créer un environnement virtuel :
+
    ```bash
    python -m venv venv
    # Sous Windows :
@@ -20,6 +21,7 @@
    ```
 
 2. Installer les dépendances :
+
    ```bash
    pip install -r requirements.txt
    ```
@@ -28,11 +30,12 @@
     ```API_KEY=<ta_cle_api>```
 
 4. Lancer le serveur :
+
     ```bash
     uvicorn main:app --reload
     ```
 
-5. Accès Swagger : http://localhost:8000/docs
+5. Accès Swagger : <http://localhost:8000/docs>
 
 ## Lancement du Frontend (React + Vite)
 
@@ -41,20 +44,22 @@
 2. Installer les dépendances :npm install
 
 3. Lancer le projet :
+
     ```bash
     npm run dev
     ```
 
-4. Interface : http://localhost:5173
+4. Interface : <http://localhost:5173>
 
-#### Optionnel : Dockerisation
+### Optionnel : Dockerisation
 
 1. Créer un Dockerfile pour backend et frontend
 
 2. Créer un `docker-compose.yml`
 
 3. Lancer avec :
-    ```bash 
+
+    ```bash
     docker-compose up --build
     ```
 
@@ -65,4 +70,4 @@
 - Les prompts sont envoyés à l’API
 - Les cas de test sont générés
 
-Acces à la BDD :  https://cloud.mongodb.com/
+Acces à la BDD :  <https://cloud.mongodb.com/>

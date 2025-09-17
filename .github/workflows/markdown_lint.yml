@@ -19,4 +19,4 @@ jobs:
       with:
         globs: |
           **/*.md
-          !LICENSE.md
+          !**/LICENSE.md

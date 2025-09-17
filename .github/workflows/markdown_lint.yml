@@ -2,7 +2,6 @@
 name: Lint
 
 on: # yamllint disable-line rule:truthy
-  push: null
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
 
@@ -15,12 +14,6 @@ jobs:
   build:
     name: Markdown Lint
     runs-on: ubuntu-latest
-
-    permissions:
-      contents: read
-      packages: read
-      # To report GitHub Actions status checks
-      statuses: write
 
     steps:
       - name: Checkout code
@@ -36,3 +29,11 @@ jobs:
         env:
           # To report GitHub Actions status checks
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VALIDATE_ALL_CODEBASE: false
+          DEFAULT_BRANCH: main
+          VALIDATE_MARKDOWN: true
+          # Disable other linters - only validate markdown
+          VALIDATE_BASH: false
+          VALIDATE_JAVASCRIPT_ES: false
+          VALIDATE_PYTHON: false
+          VALIDATE_YAML: false
